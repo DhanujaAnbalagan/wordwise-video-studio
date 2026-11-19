@@ -1,0 +1,618 @@
+{
+ "source": {
+  "provider": "fixture",
+  "model": "espeak-ng 1.52 scripted synthesis",
+  "note": "Word timestamps are exact: audio was synthesised word-by-word from this script. Confidence values are hand-authored test values (not produced by an ASR model) to exercise low-confidence warnings."
+ },
+ "duration": 46.855,
+ "speakers": {
+  "S1": {
+   "label": "Host"
+  },
+  "S2": {
+   "label": "Guest"
+  }
+ },
+ "words": [
+  {
+   "word_id": "w_0001",
+   "text": "So,",
+   "start": 0.6,
+   "end": 0.988,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0002",
+   "text": "welcome",
+   "start": 1.208,
+   "end": 1.765,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0003",
+   "text": "to",
+   "start": 1.835,
+   "end": 2.131,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0004",
+   "text": "the",
+   "start": 2.201,
+   "end": 2.471,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0005",
+   "text": "show.",
+   "start": 2.541,
+   "end": 2.95,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0006",
+   "text": "Today",
+   "start": 3.4,
+   "end": 3.882,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0007",
+   "text": "my",
+   "start": 3.952,
+   "end": 4.354,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0008",
+   "text": "guest",
+   "start": 4.424,
+   "end": 4.79,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0009",
+   "text": "built",
+   "start": 4.86,
+   "end": 5.277,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0010",
+   "text": "a",
+   "start": 5.347,
+   "end": 5.642,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0011",
+   "text": "small",
+   "start": 5.712,
+   "end": 6.177,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0012",
+   "text": "video",
+   "start": 6.247,
+   "end": 6.729,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0013",
+   "text": "startup.",
+   "start": 6.799,
+   "end": 7.391,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0014",
+   "text": "So,",
+   "start": 7.841,
+   "end": 8.285,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0015",
+   "text": "uh,",
+   "start": 8.505,
+   "end": 8.84,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0016",
+   "text": "thanks",
+   "start": 9.06,
+   "end": 9.647,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0017",
+   "text": "for",
+   "start": 9.717,
+   "end": 10.229,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0018",
+   "text": "having",
+   "start": 10.299,
+   "end": 10.847,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0019",
+   "text": "me.",
+   "start": 10.917,
+   "end": 11.316,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0020",
+   "text": "Happy",
+   "start": 11.766,
+   "end": 12.268,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0021",
+   "text": "to",
+   "start": 12.338,
+   "end": 12.712,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0022",
+   "text": "be",
+   "start": 12.782,
+   "end": 13.165,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0023",
+   "text": "here.",
+   "start": 13.235,
+   "end": 13.64,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0024",
+   "text": "Um,",
+   "start": 14.09,
+   "end": 14.428,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0025",
+   "text": "tell",
+   "start": 14.648,
+   "end": 15.001,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0026",
+   "text": "us",
+   "start": 15.071,
+   "end": 15.368,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0027",
+   "text": "how",
+   "start": 15.438,
+   "end": 15.814,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0028",
+   "text": "you",
+   "start": 15.884,
+   "end": 16.217,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0029",
+   "text": "found",
+   "start": 16.287,
+   "end": 16.775,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0030",
+   "text": "your",
+   "start": 16.845,
+   "end": 17.273,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0031",
+   "text": "first",
+   "start": 17.343,
+   "end": 17.78,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0032",
+   "text": "customers.",
+   "start": 17.85,
+   "end": 18.466,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0033",
+   "text": "Honestly,",
+   "start": 18.916,
+   "end": 19.522,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0034",
+   "text": "we",
+   "start": 19.742,
+   "end": 20.156,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0035",
+   "text": "just,",
+   "start": 20.226,
+   "end": 20.584,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0036",
+   "text": "um,",
+   "start": 20.804,
+   "end": 21.138,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0037",
+   "text": "emailed",
+   "start": 21.358,
+   "end": 21.785,
+   "speaker_id": "S2",
+   "confidence": 0.58
+  },
+  {
+   "word_id": "w_0038",
+   "text": "one",
+   "start": 21.855,
+   "end": 22.253,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0039",
+   "text": "hundred",
+   "start": 22.323,
+   "end": 22.896,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0040",
+   "text": "teachers.",
+   "start": 22.966,
+   "end": 23.467,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0041",
+   "text": "Twelve",
+   "start": 23.917,
+   "end": 24.419,
+   "speaker_id": "S2",
+   "confidence": 0.41
+  },
+  {
+   "word_id": "w_0042",
+   "text": "replied,",
+   "start": 24.489,
+   "end": 25.077,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0043",
+   "text": "and",
+   "start": 25.297,
+   "end": 25.672,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0044",
+   "text": "three",
+   "start": 25.742,
+   "end": 26.15,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0045",
+   "text": "paid.",
+   "start": 26.22,
+   "end": 26.592,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0046",
+   "text": "What",
+   "start": 28.842,
+   "end": 29.191,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0047",
+   "text": "did",
+   "start": 29.261,
+   "end": 29.567,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0048",
+   "text": "you",
+   "start": 29.637,
+   "end": 29.971,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0049",
+   "text": "charge",
+   "start": 30.041,
+   "end": 30.549,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0050",
+   "text": "them?",
+   "start": 30.619,
+   "end": 31.065,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0051",
+   "text": "Pricing",
+   "start": 31.515,
+   "end": 32.082,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0052",
+   "text": "was",
+   "start": 32.152,
+   "end": 32.586,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0053",
+   "text": "nine",
+   "start": 32.656,
+   "end": 33.117,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0054",
+   "text": "dollars",
+   "start": 33.187,
+   "end": 33.641,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0055",
+   "text": "a",
+   "start": 33.711,
+   "end": 34.039,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0056",
+   "text": "month",
+   "start": 34.109,
+   "end": 34.557,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0057",
+   "text": "at",
+   "start": 34.627,
+   "end": 34.936,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0058",
+   "text": "first.",
+   "start": 35.006,
+   "end": 35.436,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0059",
+   "text": "And,",
+   "start": 35.886,
+   "end": 36.26,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0060",
+   "text": "uh,",
+   "start": 36.48,
+   "end": 36.719,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0061",
+   "text": "what",
+   "start": 36.939,
+   "end": 37.288,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0062",
+   "text": "would",
+   "start": 37.358,
+   "end": 37.713,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0063",
+   "text": "you",
+   "start": 37.783,
+   "end": 38.116,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0064",
+   "text": "change",
+   "start": 38.186,
+   "end": 38.695,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0065",
+   "text": "today?",
+   "start": 38.765,
+   "end": 39.247,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0066",
+   "text": "I",
+   "start": 39.697,
+   "end": 40.086,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0067",
+   "text": "would",
+   "start": 40.156,
+   "end": 40.532,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0068",
+   "text": "raise",
+   "start": 40.602,
+   "end": 41.086,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0069",
+   "text": "the",
+   "start": 41.156,
+   "end": 41.546,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0070",
+   "text": "price",
+   "start": 41.616,
+   "end": 42.043,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0071",
+   "text": "sooner.",
+   "start": 42.113,
+   "end": 42.567,
+   "speaker_id": "S2",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0072",
+   "text": "Great",
+   "start": 43.017,
+   "end": 43.373,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0073",
+   "text": "advice.",
+   "start": 43.443,
+   "end": 44.064,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0074",
+   "text": "Thank",
+   "start": 44.514,
+   "end": 45.001,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  },
+  {
+   "word_id": "w_0075",
+   "text": "you.",
+   "start": 45.071,
+   "end": 45.404,
+   "speaker_id": "S1",
+   "confidence": 0.96
+  }
+ ]
+}

@@ -28,3 +28,9 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+- Timeline engine lives in `src/engine/` as pure, deterministic TS (integer source ms); UI never mutates timeline state directly — why: same input + state must give the same hash.
+- Interpreter only translates text to `Op[]`; `executor` validates and applies atomically, one revision per accepted edit — why: no partial or silent destructive edits.
+- Projects and media persist in IndexedDB (`src/lib/storage.ts`); demo videos are served from `public/demo/` (same-origin needed for canvas/Web Audio export).
+- tsconfig relaxes noUncheckedIndexedAccess / exactOptionalPropertyTypes — why: engine is index-heavy over validated arrays; engine tests cover bounds.
