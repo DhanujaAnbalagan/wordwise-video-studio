@@ -62,7 +62,12 @@ import sys, os
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
-# Placeholder interpreter - real engine not yet implemented.
+"""Placeholder for the VideoFlow AI editing engine.
+The real engine lives in the frontend TypeScript code under `src/engine`.
+At this stage we expose a stub `interpret_instruction` that returns a minimal
+`applied` result so that the API can be exercised without invoking the TS
+interpreter.  The stub will be replaced with a proper bridge in a later phase.
+"""
 def interpret_instruction(*, instruction: str, state, transcript):
     """Return a minimal applied result.
     This stub satisfies the instruction endpoint without invoking the TS engine.
