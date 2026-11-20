@@ -38,8 +38,8 @@ def test_layout_multiple_consecutive_segments():
 
 def test_layout_reordered_segments():
     segs = [
-        Segment(srcStart=20, srcEnd=30, speed=2.0),
-        Segment(srcStart=0, srcEnd=10, speed=1.0),
+        Segment(srcStart=20_000, srcEnd=30_000, speed=2.0),
+        Segment(srcStart=0, srcEnd=10_000, speed=1.0),
     ]
     placed = layout(segs)
     # First segment (20-30) edited duration = (10)/2 = 5
