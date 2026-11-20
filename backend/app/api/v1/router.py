@@ -69,6 +69,19 @@ At this stage we expose a stub `interpret_instruction` that returns a minimal
 interpreter.  The stub will be replaced with a proper bridge in a later phase.
 """
 def interpret_instruction(*, instruction: str, state, transcript):
+    """Return a deterministic unavailable result.
+    The real editing engine is not yet integrated; this placeholder never
+    reports a successful edit. It returns a ``rejected`` status so that callers
+    know the operation cannot be performed.
+    """
+    return {
+        "id": "engine_unavailable",
+        "status": "rejected",
+        "notes": ["Editing engine not available in backend"],
+        "ops": [],
+        "after": state,
+    }
+
     """Return a minimal applied result.
     This stub satisfies the instruction endpoint without invoking the TS engine.
     """
