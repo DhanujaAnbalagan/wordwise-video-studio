@@ -48,7 +48,7 @@ def layout(segs: List[Segment]) -> List[PlacedSegment]:
         # Guard against zero‑length or inverted intervals – they are ignored in TS.
         if s.srcEnd <= s.srcStart:
             continue
-        edited_len = int((s.srcEnd - s.srcStart) / s.speed)
+        edited_len = (s.srcEnd - s.srcStart) / s.speed
         placed.append(
             PlacedSegment(
                 srcStart=s.srcStart,
@@ -73,7 +73,7 @@ def src_to_tl(placed: List[PlacedSegment], t: Ms) -> Optional[Ms]:
             continue
         if seg.srcStart <= t < seg.srcEnd:
             # Inside the segment – linear mapping using the segment speed.
-            offset = int((t - seg.srcStart) / seg.speed)
+            offset = (t - seg.srcStart) / seg.speed
             return seg.tlStart + offset
         if t == seg.srcEnd:
             return seg.tlEnd
@@ -98,7 +98,7 @@ def tl_to_src(placed: List[PlacedSegment], x: Ms) -> Optional[Dict[str, int]]:
         x = 0
     for idx, seg in enumerate(placed):
         if seg.tlStart <= x < seg.tlEnd:
-            src_offset = int((x - seg.tlStart) * seg.speed)
+            src_offset = (x - seg.tlStart) * seg.speed
             return {"src": seg.srcStart + src_offset, "segIndex": idx}
     return None
 
