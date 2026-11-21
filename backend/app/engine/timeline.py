@@ -6,10 +6,12 @@ All functions are immutable – they never modify their inputs.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
-from .types import Segment, Ms, Interval, Word, TextOverlay
+from .types import Segment, Ms, Interval, Word, TextOverlay, TimelineState
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -392,6 +394,14 @@ def place_text_overlay(placed: List[PlacedSegment], overlay: TextOverlay) -> Pla
 def place_text_overlays(placed: List[PlacedSegment], overlays: List[TextOverlay]) -> List[PlacedOverlay]:
     """Determine timeline placements for a list of text overlays."""
     return [place_text_overlay(placed, o) for o in overlays]
+
+
+# ---------------------------------------------------------------------------
+# Initial state & Hash (re-exported from serialize)
+# ---------------------------------------------------------------------------
+
+from .serialize import initial_state, timeline_hash
+
 
 # ---------------------------------------------------------------------------
 # End of file

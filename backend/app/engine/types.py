@@ -213,3 +213,5 @@ class History:
     revisions: List[Revision] = field(default_factory=list)
     undo: List[str] = field(default_factory=list)  # revision IDs, head last
     redo: List[str] = field(default_factory=list)
+    sourceVideoPath: Optional[str] = None
+    sourceHash: Optional[str] = None

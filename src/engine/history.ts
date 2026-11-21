@@ -2,7 +2,18 @@ import { timelineHash } from "./timeline";
 import type { EngineError, History, Op, Revision, TimelineState } from "./types";
 import { err } from "./operations";
 
+export function cloneTimelineState(state: TimelineState): TimelineState {
+  return {
+    ...state,
+    segments: state.segments.map((s) => ({ ...s })),
+    captions: state.captions.map((c) => ({ ...c, wordIds: [...c.wordIds] })),
+    effects: state.effects.map((e) => ({ ...e })),
+    ...(state.overlays ? { overlays: state.overlays.map((o) => ({ ...o, ...(o.style ? { style: { ...o.style } } : {}) })) } : {}),
+  };
+}
+
 export function createHistory(state: TimelineState, now = 0): History {
+  const snapshot = cloneTimelineState(state);
   const r0: Revision = {
     id: "r0",
     index: 0,
@@ -10,8 +21,8 @@ export function createHistory(state: TimelineState, now = 0): History {
     kind: "initial",
     label: "Original upload",
     ops: [],
-    state,
-    hash: timelineHash(state),
+    state: snapshot,
+    hash: timelineHash(snapshot),
     createdAt: now,
   };
   return { revisions: [r0], undo: ["r0"], redo: [] };
@@ -32,15 +43,16 @@ export function commit(
   now = 0,
 ): { history: History; revision: Revision } {
   const index = h.revisions.length;
+  const snapshot = cloneTimelineState(entry.state);
   const revision: Revision = {
     id: `r${index}`,
     index,
     parentId: head(h).id,
     kind: entry.kind,
     label: entry.label,
-    ops: entry.ops,
-    state: entry.state,
-    hash: timelineHash(entry.state),
+    ops: entry.ops.map((o) => ({ ...o })),
+    state: snapshot,
+    hash: timelineHash(snapshot),
     createdAt: now,
   };
   return {

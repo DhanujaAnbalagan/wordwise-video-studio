@@ -57,11 +57,24 @@ export interface AudioEffect {
   srcEnd: Ms;
 }
 
+export type OverlayAnchorType = "source" | "timeline";
+
+export interface TextOverlay {
+  id: string;
+  text: string;
+  anchorType: OverlayAnchorType;
+  startMs: Ms;
+  endMs: Ms;
+  position?: "bottom" | "top" | "center";
+  style?: Record<string, string>;
+}
+
 export interface TimelineState {
   sourceDurationMs: Ms;
   segments: Segment[];
   captions: Caption[];
   effects: AudioEffect[];
+  overlays?: TextOverlay[];
   nextId: number;
 }
 
