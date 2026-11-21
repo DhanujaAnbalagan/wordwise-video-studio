@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     storage_backend: Literal["local", "minio"] = "local"
     minio_endpoint: str = "localhost:9000"
+    minio_public_endpoint: str = "http://localhost:9000"
     minio_access_key: str = ""
     minio_secret_key: str = ""
     minio_bucket: str = "videoflow"
