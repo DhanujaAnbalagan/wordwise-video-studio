@@ -1,57 +1,104 @@
-"""SQLAlchemy models for VideoFlow AI backend.
-We deliberately avoid sqlmodel (unavailable) and use plain SQLAlchemy with
-declarative base.  Types mirror the engine data structures needed for persistence.
+"""Persistence model.
+
+* ``Project`` – one uploaded source video, its transcript and the undo/redo stacks.
+* ``RevisionRow`` – immutable timeline snapshots (``r0``, ``r1`` … per project).
+* ``InstructionRow`` – the audit log of every instruction and its outcome.
+* ``Job`` – background work (media processing, rendering) with progress 0–100.
+* ``IdempotencyRecord`` – stored responses for ``Idempotency-Key`` replays.
+
+The original upload is never modified: it is stored once under ``media.storageKey``
+with its SHA-256, and renders are written to separate keys.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, JSON, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-Base = declarative_base()
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 class Project(Base):
     __tablename__ = "projects"
-    id = Column(String, primary_key=True, index=True)  # user‑provided UUID or slug
-    name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    source_video_path = Column(String, nullable=False)  # immutable path on server
-    source_hash = Column(String, nullable=False)  # SHA‑256 of original file
-    transcript = Column(JSON, nullable=False)  # stores the Transcript JSON from engine
 
-    # One‑to‑many relationship to revisions
-    revisions = relationship("Revision", back_populates="project", cascade="all, delete-orphan")
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(32), default="created")  # created|processing|ready|failed
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    media: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    transcript: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    silences: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    undo_stack: Mapped[list] = mapped_column(JSON, default=list)
+    redo_stack: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-class Revision(Base):
+
+class RevisionRow(Base):
     __tablename__ = "revisions"
-    id = Column(String, primary_key=True, index=True)  # revision hash (stableHash)
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
-    parent_id = Column(String, ForeignKey("revisions.id"), nullable=True)
-    kind = Column(String, nullable=False)  # "initial" | "edit" | "restore"
-    label = Column(String, nullable=False)
-    ops = Column(JSON, nullable=False)  # list of Op objects (as dicts)
-    state = Column(JSON, nullable=False)  # TimelineState snapshot
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("project_id", "rev_id", name="uq_project_revision"),)
 
-    project = relationship("Project", back_populates="revisions")
-    parent = relationship("Revision", remote_side=[id])
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    rev_id: Mapped[str] = mapped_column(String(32))
+    index: Mapped[int] = mapped_column(Integer)
+    parent_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    label: Mapped[str] = mapped_column(Text)
+    ops: Mapped[list] = mapped_column(JSON, default=list)
+    state: Mapped[dict] = mapped_column(JSON)
+    hash: Mapped[str] = mapped_column(String(64))
+    created_ms: Mapped[int] = mapped_column(Integer, default=0)
 
-    __table_args__ = (
-        UniqueConstraint('project_id', 'id', name='uq_project_revision'),
-    )
 
-class ExportJob(Base):
-    __tablename__ = "export_jobs"
-    id = Column(String, primary_key=True, index=True)
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
-    revision_id = Column(String, ForeignKey("revisions.id"), nullable=False)
-    status = Column(String, nullable=False, default="queued")  # queued | processing | done | failed
-    result_url = Column(String, nullable=True)  # MinIO public URL when done
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+class InstructionRow(Base):
+    __tablename__ = "instructions"
+    __table_args__ = (UniqueConstraint("project_id", "result_id", name="uq_project_instruction"),)
 
-    project = relationship("Project")
-    revision = relationship("Revision")
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    result_id: Mapped[str] = mapped_column(String(32))
+    seq: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32))
+    result: Mapped[dict] = mapped_column(JSON)
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # process | render
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued|running|succeeded|failed
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (UniqueConstraint("key", "method", "path", name="uq_idempotency"),)
+
+    pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(255))
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(512))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(16), default="pending")  # pending | done
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

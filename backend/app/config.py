@@ -1,82 +1,78 @@
-"""Configuration module for VideoFlow AI backend.
-It uses Pydantic's BaseSettings to read environment variables.
-All values have sensible defaults for local development; no credentials are
-hard‑coded – they must be supplied via the environment when running in
-production.
+"""Runtime configuration, read from environment variables (see ``.env.example``).
+
+Nothing secret has a real default. In production (``ENV=production``) the
+service refuses to start with insecure settings (wildcard CORS, MinIO storage
+without credentials).
 """
 
 from __future__ import annotations
 
-import os
+from functools import lru_cache
 from pathlib import Path
-from pydantic import BaseSettings, Field, AnyUrl, validator
+from typing import List, Literal
+
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
-    # Core service settings
-    database_url: str = Field(
-        default="sqlite:///videoflow.db",
-        env="DATABASE_URL",
-        description="SQLAlchemy database URL",
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
-    # MinIO / S3 compatible storage
-    minio_endpoint: AnyUrl = Field(
-        default="http://localhost:9000",
-        env="MINIO_ENDPOINT",
-        description="MinIO server endpoint",
-    )
-    minio_access_key: str = Field(
-        default="",
-        env="MINIO_ACCESS_KEY",
-        description="MinIO access key",
-    )
-    minio_secret_key: str = Field(
-        default="",
-        env="MINIO_SECRET_KEY",
-        description="MinIO secret key",
-    )
-    minio_bucket: str = Field(
-        default="videoflow",
-        env="MINIO_BUCKET",
-        description="Default bucket for video assets",
-    )
+    env: Literal["development", "test", "production"] = "development"
+    log_level: str = "INFO"
 
-    # Executable paths – assumes they are on $PATH for dev.
-    ffmpeg_path: str = Field(
-        default="ffmpeg",
-        env="FFMPEG_PATH",
-        description="Path to ffmpeg executable",
-    )
-    ffprobe_path: str = Field(
-        default="ffprobe",
-        env="FFPROBE_PATH",
-        description="Path to ffprobe executable",
-    )
+    database_url: str = Field(default="sqlite:///./data/videoflow.db", description="SQLAlchemy URL")
+    data_dir: Path = Field(default=Path("./data"), description="Working directory for local storage, renders and caches")
 
-    # Whisper settings – placeholder values.
-    whisper_provider: str = Field(
-        default="openai",
-        env="WHISPER_PROVIDER",
-        description="Provider for Whisper transcription",
-    )
-    whisper_model: str = Field(
-        default="base",
-        env="WHISPER_MODEL",
-        description="Model name to use with the Whisper provider",
-    )
+    storage_backend: Literal["local", "minio"] = "local"
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "videoflow"
+    minio_secure: bool = False
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-        # Allow loading from a .env file in the project root.
-        env_file_encoding = "utf-8"
+    ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
+    whisper_model: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
 
-    @validator("minio_access_key", "minio_secret_key")
-    def non_empty_credentials(cls, v, values, field):
-        # In development the credentials can be empty; otherwise raise.
-        if not v and os.getenv("ENV") == "production":
-            raise ValueError(f"{field.name} must be set in production")
+    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:8080", "http://localhost:5173"])
+    max_upload_mb: int = 1024
+    worker_threads: int = 2
+    job_timeout_s: int = 3600
+    idempotency_ttl_hours: int = 24
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, v):  # accept "a,b" from env
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
-# Export a singleton for convenient import throughout the codebase.
-settings = Settings()
+    @model_validator(mode="after")
+    def _production_guards(self) -> "Settings":
+        if self.env == "production":
+            if "*" in self.cors_origins:
+                raise ValueError("CORS_ORIGINS must list explicit origins in production.")
+            if self.storage_backend == "minio" and not (self.minio_access_key and self.minio_secret_key):
+                raise ValueError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY are required in production.")
+        return self
+
+    def safe_dict(self) -> dict:
+        """Settings without secrets (for logs / readiness output)."""
+        d = self.model_dump()
+        for k in list(d):
+            if any(s in k for s in ("secret", "password", "token", "access_key")):
+                d[k] = "***" if d[k] else ""
+        d["data_dir"] = str(d["data_dir"])
+        return d
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+def reset_settings_cache() -> None:
+    get_settings.cache_clear()

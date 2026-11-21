@@ -132,7 +132,7 @@ def _clone(state: TimelineState) -> TimelineState:
         segments=list(state.segments),
         captions=[replace(c, wordIds=list(c.wordIds)) for c in state.captions],
         effects=list(state.effects),
-        overlays=list(state.overlays),
+        overlays=[replace(o, style=dict(o.style) if o.style else None) for o in state.overlays],
         nextId=state.nextId,
     )
 
@@ -272,7 +272,7 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
 
         segs: List[Segment] = list(state.segments)
         for piece in missing:
-            new_seg = Segment(srcStart=piece.start, srcEnd=piece.end, speed=1)
+            new_seg = Segment(srcStart=piece.start, srcEnd=piece.end, speed=1.0)
             # Prefer to insert next to the nearest source neighbour.
             idx = next((i for i, s in enumerate(segs) if s.srcEnd == piece.start), -1)
             if idx >= 0:
@@ -642,7 +642,7 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             startMs=start_ms,
             endMs=end_ms,
             position=position,
-            style=overlay_op.get("style"),
+            style=dict(overlay_op["style"]) if overlay_op.get("style") else None,
         )
         state.overlays.append(overlay)
         state.nextId += 1
