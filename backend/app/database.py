@@ -75,12 +75,18 @@ def session_scope() -> Iterator[Session]:
         s.close()
 
 
-def get_db() -> Iterator[Session]:
-    """FastAPI dependency."""
+def SessionLocal() -> Session:
+    """Create a new SQLAlchemy session."""
+    global _SessionLocal
     if _SessionLocal is None:
         init_db()
     assert _SessionLocal is not None
-    s = _SessionLocal()
+    return _SessionLocal()
+
+
+def get_db() -> Iterator[Session]:
+    """FastAPI dependency."""
+    s = SessionLocal()
     try:
         yield s
     finally:

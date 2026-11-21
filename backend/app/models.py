@@ -102,3 +102,8 @@ class IdempotencyRecord(Base):
     response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     response_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# Aliases for backwards compatibility and clarity
+Revision = RevisionRow
+Instruction = InstructionRow

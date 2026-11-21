@@ -109,6 +109,22 @@ def tl_to_src(placed: List[PlacedSegment], x: Ms) -> Optional[Dict[str, int]]:
             return {"src": seg.srcStart + src_offset, "segIndex": idx}
     return None
 
+
+def tl_range_to_src(placed: List[PlacedSegment], a: int, b: int) -> List[Interval]:
+    """Map a timeline range [a, b] back to a list of source-time intervals."""
+    out: List[Interval] = []
+    for p in placed:
+        s = max(a, p.tlStart)
+        e = min(b, p.tlEnd)
+        if e > s:
+            out.append(
+                Interval(
+                    start=int(round(p.srcStart + (s - p.tlStart) * p.speed)),
+                    end=int(round(p.srcStart + (e - p.tlStart) * p.speed)),
+                )
+            )
+    return out
+
 # ---------------------------------------------------------------------------
 # Helper utilities used by operations (newly added)
 # ---------------------------------------------------------------------------
