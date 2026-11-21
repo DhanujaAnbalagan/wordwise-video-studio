@@ -4,7 +4,14 @@ uvicorn==0.54.0
 
 # Database
 sqlalchemy==2.0.58
-pydantic==2.8.2
+pydantic==2.9.0
+pydantic-settings==2.5.2
+
+# Transcription
+# CPU-only torch is pre-installed in the Docker image before this file is processed.
+# Pinning the same version here prevents openai-whisper from pulling a CUDA replacement.
+torch==2.2.2
+openai-whisper
 
 # Testing utilities
 pytest==8.2.2
