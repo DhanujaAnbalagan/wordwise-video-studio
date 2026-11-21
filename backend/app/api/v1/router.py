@@ -40,6 +40,10 @@ from ...engine.types import History as EngineHistory, Revision, Transcript
 
 router = APIRouter()
 
+# Include health endpoints
+from backend.app.api.v1.health import router as health_router
+router.include_router(health_router, tags=["health"])
+
 
 # ---------------------------------------------------------------------------
 # Pydantic Schemas
