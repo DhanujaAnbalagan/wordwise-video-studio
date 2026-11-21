@@ -11,6 +11,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Literal
 
+import pydantic_core
+import pydantic_core.core_schema as _cs
+
+if not hasattr(pydantic_core, "validate_core_schema"):
+    pydantic_core.validate_core_schema = lambda s: s
+
+if hasattr(_cs, "union_schema"):
+    _orig_union = _cs.union_schema
+    _cs.union_schema = lambda *a, **kw: _orig_union(*a, **{k: v for k, v in kw.items() if k != "strict"})
+
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
