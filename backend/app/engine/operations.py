@@ -1,16 +1,37 @@
 """
 Deterministic editing operations for VideoFlow AI.
 
-This module mirrors the logic in `src/engine/operations.ts` while staying
-pure‑functional: the input `TimelineState` is never mutated – a new state
-object is returned on success. Errors are represented by the `EngineError`
-dataclass defined in `types.py`.
+Mirrors ``src/engine/operations.ts`` as a pure-functional Python module:
+the input ``TimelineState`` is **never** mutated – a fresh state object is
+returned on success.  Errors are represented by the ``EngineError`` dataclass
+defined in ``types.py``.
+
+Supported operation types
+--------------------------
+cut           – remove one or more source-time ranges from the timeline.
+restore       – bring back previously-removed source-time ranges.
+speed         – change playback speed for a source-time range.
+mute          – mute audio for specific transcript words.
+bleep         – replace audio with a bleep for specific transcript words.
+clear_audio   – remove mute/bleep effects from specific transcript words.
+add_caption   – add a caption anchored to transcript word IDs.
+remove_caption– delete an existing caption by ID.
+style_caption – change the size or position of an existing caption.
+move          – reorder a source-time range to a new position in the timeline.
+
+NOT implemented here (out of scope for Phase 2):
+  - Undo / redo
+  - Instruction text parsing / AI interpretation
+  - FFmpeg rendering
+  - API endpoints / revision history
 """
 
 from __future__ import annotations
 
+import copy
+import json
 from dataclasses import replace
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 
 from .types import (
     AudioEffect,
@@ -18,7 +39,7 @@ from .types import (
     EngineError,
     Interval,
     Op,
-    OpResult,
+    Segment,
     TimelineState,
     Word,
     CutOp,
@@ -29,43 +50,59 @@ from .types import (
     RemoveCaptionOp,
     StyleCaptionOp,
     MoveOp,
-    CaptionSize,
-    WORD_KEEP_FRACTION,
 )
 from .timeline import (
+    interval_minus,
     layout,
+    normalize_segments,
+    place_word,
     present_intervals,
     present_ms,
     split_at,
     subtract_range,
-    normalize_segments,
     timeline_duration,
-    interval_minus,
-    place_word,
 )
 
 # ---------------------------------------------------------------------------
-# Constants – copied from the TypeScript implementation
-# ---------------------------------------------------------------------------
-MIN_SPEED = 0.25
-MAX_SPEED = 4.0
-MIN_TIMELINE_MS = 100
-
-# ---------------------------------------------------------------------------
-# Helper utilities
+# Public constants (mirrors TypeScript)
 # ---------------------------------------------------------------------------
 
-def _err(code: str, message: str, details: Dict[str, object] | None = None) -> EngineError:
+MIN_SPEED: float = 0.25
+MAX_SPEED: float = 4.0
+MIN_TIMELINE_MS: float = 100  # anything shorter is treated as "whole video cut"
+
+SIZES: List[str] = ["sm", "md", "lg", "xl"]
+
+# ---------------------------------------------------------------------------
+# Result type
+# ---------------------------------------------------------------------------
+
+class OpSuccess(TypedDict):
+    ok: bool          # always True
+    state: TimelineState
+    notes: List[str]
+
+
+class OpFailure(TypedDict):
+    ok: bool          # always False
+    error: EngineError
+
+
+OpResult = Union[OpSuccess, OpFailure]
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _err(code: str, message: str, details: Optional[Dict[str, object]] = None) -> EngineError:
     return EngineError(code=code, message=message, details=details or {})
 
 
-def _validate_range(r: Interval, state: TimelineState) -> EngineError | None:
+def _validate_range(r: Interval, state: TimelineState) -> Optional[EngineError]:
+    """Validate that *r* is a valid integer-ms interval within the source video."""
     if not isinstance(r.start, int) or not isinstance(r.end, int):
-        return _err(
-            "INVALID_RANGE",
-            "Range bounds must be whole milliseconds.",
-            {"range": r},
-        )
+        return _err("INVALID_RANGE", "Range bounds must be whole milliseconds.", {"range": r})
     if r.start < 0 or r.end > state.sourceDurationMs:
         return _err(
             "RANGE_OUT_OF_BOUNDS",
@@ -78,45 +115,50 @@ def _validate_range(r: Interval, state: TimelineState) -> EngineError | None:
 
 
 def _clone(state: TimelineState) -> TimelineState:
-    """Create a shallow copy of the timeline state.
+    """Return a shallow-but-independent copy of *state*.
 
-    The lists are copied and their items are shallow‑copied (dataclasses are
-    immutable except for `TimelineState` itself). This mirrors the TS `clone`
-    function which spreads the top‑level object and copies arrays.
+    Dataclass fields that are frozen (Segment, Caption, AudioEffect) are safe
+    to share; list containers are always copied so mutations to one state do
+    not affect another.  This mirrors the TypeScript ``clone`` helper exactly.
     """
     return TimelineState(
         sourceDurationMs=state.sourceDurationMs,
-        segments=[replace(s) for s in state.segments],
-        captions=[replace(c) for c in state.captions],
-        effects=[replace(e) for e in state.effects],
+        segments=list(state.segments),
+        captions=[replace(c, wordIds=list(c.wordIds)) for c in state.captions],
+        effects=list(state.effects),
         nextId=state.nextId,
     )
 
+
 # ---------------------------------------------------------------------------
-# Core operation dispatcher – mirrors `applyOp` in the TS code.
+# Core dispatcher – mirrors ``applyOp`` in the TypeScript source
 # ---------------------------------------------------------------------------
 
-def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpResult:
-    """Apply a single validated operation to a timeline state.
+def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpResult:  # type: ignore[return]
+    """Apply a single validated operation to *input_state*.
 
-    Returns a dict with either ``{"ok": True, "state": new_state, "notes": [...]}``
-    or ``{"ok": False, "error": EngineError}``.
-    The input state is never mutated.
+    Returns:
+        ``{"ok": True,  "state": <new TimelineState>, "notes": [...]}`` on success.
+        ``{"ok": False, "error": <EngineError>}`` on any validation failure.
+
+    The *input_state* is **never** mutated.
     """
     state = _clone(input_state)
     notes: List[str] = []
 
-    op_type = op["type"]
+    op_type: str = op["type"]  # type: ignore[literal-required]
 
-    # ---------- cut ----------
+    # ------------------------------------------------------------------
+    # cut
+    # ------------------------------------------------------------------
     if op_type == "cut":
         cut_op: CutOp = op  # type: ignore[assignment]
         if not cut_op["ranges"]:
             return {"ok": False, "error": _err("INVALID_OPERATION", "Cut has no ranges.")}
         for r in cut_op["ranges"]:
-            e = _validate_range(r, state)
-            if e:
-                return {"ok": False, "error": e}
+            err = _validate_range(r, state)
+            if err:
+                return {"ok": False, "error": err}
         removable = sum(present_ms(state.segments, r) for r in cut_op["ranges"])
         if removable < 1:
             return {
@@ -141,28 +183,27 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
                 ),
             }
         state.segments = segs
-        notes.append(f"Removed {(removable / 1000):.3f}s of source content.")
+        notes.append(f"Removed {removable / 1000:.3f}s of source content.")
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- restore ----------
+    # ------------------------------------------------------------------
+    # restore
+    # ------------------------------------------------------------------
     if op_type == "restore":
         restore_op: RestoreOp = op  # type: ignore[assignment]
         for r in restore_op["ranges"]:
-            e = _validate_range(r, state)
-            if e:
-                return {"ok": False, "error": e}
-        # Determine which pieces are missing (cut) within the requested ranges
-        missing = (
-            restore_op["ranges"]
-            .flat_map(lambda r: interval_minus(r, present_intervals(state.segments)))  # type: ignore[arg-type]
-        )
-        # The above line uses a helper; in Python we implement with a loop
-        # (the TypeScript version flattens intervalMinus over each range)
-        missing_intervals: List[Interval] = []
+            err = _validate_range(r, state)
+            if err:
+                return {"ok": False, "error": err}
+
+        # Collect which sub-intervals of the requested ranges are absent (cut).
+        present = present_intervals(state.segments)
+        missing: List[Interval] = []
         for r in restore_op["ranges"]:
-            missing_intervals.extend(interval_minus(r, present_intervals(state.segments)))
-        missing_intervals.sort(key=lambda i: i.start)
-        if not missing_intervals:
+            missing.extend(interval_minus(r, present))
+        missing.sort(key=lambda i: i.start)
+
+        if not missing:
             return {
                 "ok": False,
                 "error": _err(
@@ -171,39 +212,44 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
                     {"ranges": restore_op["ranges"]},
                 ),
             }
-        segs = list(state.segments)
-        for piece in missing_intervals:
-            seg = Interval(srcStart=piece.start, srcEnd=piece.end, speed=1)  # type: ignore[arg-type]
-            # Insert next to its source neighbour so restored content returns to its original place.
+
+        segs: List[Segment] = list(state.segments)
+        for piece in missing:
+            new_seg = Segment(srcStart=piece.start, srcEnd=piece.end, speed=1)
+            # Prefer to insert next to the nearest source neighbour.
             idx = next((i for i, s in enumerate(segs) if s.srcEnd == piece.start), -1)
             if idx >= 0:
-                segs.insert(idx + 1, seg)  # type: ignore[arg-type]
+                segs.insert(idx + 1, new_seg)
                 continue
             idx = next((i for i, s in enumerate(segs) if s.srcStart == piece.end), -1)
             if idx >= 0:
-                segs.insert(idx, seg)  # type: ignore[arg-type]
+                segs.insert(idx, new_seg)
                 continue
-            # Find the predecessor segment that ends before the piece starts
+            # Fall back: insert after the last segment that ends before piece.start.
             pred = -1
             for i, s in enumerate(segs):
                 if s.srcEnd <= piece.start and (pred < 0 or s.srcEnd > segs[pred].srcEnd):
                     pred = i
             if pred >= 0:
-                segs.insert(pred + 1, seg)  # type: ignore[arg-type]
+                segs.insert(pred + 1, new_seg)
             else:
-                segs.insert(0, seg)  # type: ignore[arg-type]
-        segs = normalize_segments(segs)
-        state.segments = segs
-        restored = sum(p.end - p.start for p in missing_intervals)
-        notes.append(f"Restored {(restored / 1000):.3f}s of source content at its original position (1x speed).")
+                segs.insert(0, new_seg)
+
+        state.segments = normalize_segments(segs)
+        restored = sum(p.end - p.start for p in missing)
+        notes.append(
+            f"Restored {restored / 1000:.3f}s of source content at its original position (1x speed)."
+        )
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- speed ----------
+    # ------------------------------------------------------------------
+    # speed
+    # ------------------------------------------------------------------
     if op_type == "speed":
         speed_op: SpeedOp = op  # type: ignore[assignment]
-        e = _validate_range(speed_op["range"], state)
-        if e:
-            return {"ok": False, "error": e}
+        err = _validate_range(speed_op["range"], state)
+        if err:
+            return {"ok": False, "error": err}
         if not (MIN_SPEED <= speed_op["speed"] <= MAX_SPEED):
             return {
                 "ok": False,
@@ -222,15 +268,12 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
                     {"range": speed_op["range"]},
                 ),
             }
-        segs = split_at(split_at(state.segments, speed_op["range"].start), speed_op["range"].end)
+        r = speed_op["range"]
+        segs = split_at(split_at(state.segments, r.start), r.end)
         changed = False
-        new_segs = []
+        new_segs: List[Segment] = []
         for s in segs:
-            if (
-                s.srcStart >= speed_op["range"].start
-                and s.srcEnd <= speed_op["range"].end
-                and s.speed != speed_op["speed"]
-            ):
+            if s.srcStart >= r.start and s.srcEnd <= r.end and s.speed != speed_op["speed"]:
                 changed = True
                 new_segs.append(replace(s, speed=speed_op["speed"]))
             else:
@@ -240,40 +283,50 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
                 "ok": False,
                 "error": _err(
                     "NO_CHANGE",
-                    f"That range already plays at {speed_op["speed"]}x.",
-                    {"range": speed_op["range"]},
+                    f"That range already plays at {speed_op['speed']}x.",
+                    {"range": r},
                 ),
             }
         state.segments = normalize_segments(new_segs)
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- audio effects (mute, bleep, clear_audio) ----------
+    # ------------------------------------------------------------------
+    # mute / bleep / clear_audio
+    # ------------------------------------------------------------------
     if op_type in {"mute", "bleep", "clear_audio"}:
         audio_op: AudioOp = op  # type: ignore[assignment]
-        target_words = [words.get(wid) for wid in audio_op["wordIds"]]
-        if not target_words or any(w is None for w in target_words):
+        word_ids: List[str] = audio_op["wordIds"]
+        targets = [words.get(wid) for wid in word_ids]
+        if not targets or any(w is None for w in targets):
             return {
                 "ok": False,
                 "error": _err(
                     "UNKNOWN_WORD",
                     "One or more word IDs do not exist.",
-                    {"wordIds": audio_op["wordIds"]},
+                    {"wordIds": word_ids},
                 ),
             }
+
         if op_type == "clear_audio":
-            before = len(state.effects)
-            state.effects = [fx for fx in state.effects if fx.wordId not in audio_op["wordIds"]]
-            if len(state.effects) == before:
-                return {"ok": False, "error": _err("NO_CHANGE", "Those words have no mute or bleep.")}
+            before_count = len(state.effects)
+            state.effects = [fx for fx in state.effects if fx.wordId not in word_ids]
+            if len(state.effects) == before_count:
+                return {
+                    "ok": False,
+                    "error": _err("NO_CHANGE", "Those words have no mute or bleep."),
+                }
             return {"ok": True, "state": state, "notes": notes}
+
+        # mute or bleep
+        kind = op_type  # "mute" | "bleep"
         added = 0
-        for w in target_words:  # type: ignore[arg-type]
-            if any(fx.wordId == w.id and fx.kind == op_type for fx in state.effects):
-                continue
+        for w in targets:  # type: ignore[union-attr]
+            if any(fx.wordId == w.id and fx.kind == kind for fx in state.effects):
+                continue  # already has this effect
             state.effects.append(
                 AudioEffect(
                     id=f"fx_{state.nextId}",
-                    kind=op_type,  # type: ignore[arg-type]
+                    kind=kind,  # type: ignore[arg-type]
                     wordId=w.id,
                     srcStart=w.start,
                     srcEnd=w.end,
@@ -281,32 +334,41 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             )
             state.nextId += 1
             added += 1
-        if added == 0:
-            return {
-                "ok": False,
-                "error": _err(
-                    "NO_CHANGE",
-                    f"Those words are already {'muted' if op_type == 'mute' else 'bleeped'}.",
-                ),
-            }
-        notes.append(f"{'Muted' if op_type == 'mute' else 'Bleeped'} {added} word(s).")
+        if not added:
+            verb = "muted" if kind == "mute" else "bleeped"
+            return {"ok": False, "error": _err("NO_CHANGE", f"Those words are already {verb}.")}
+        verb2 = "Muted" if kind == "mute" else "Bleeped"
+        notes.append(f"{verb2} {added} word(s).")
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- add_caption ----------
+    # ------------------------------------------------------------------
+    # add_caption
+    # ------------------------------------------------------------------
     if op_type == "add_caption":
         add_op: AddCaptionOp = op  # type: ignore[assignment]
         text = add_op["text"].strip()
         if not text or len(text) > 120:
-            return {"ok": False, "error": _err("INVALID_CAPTION", "Caption text must be 1–120 characters.")}
+            return {
+                "ok": False,
+                "error": _err("INVALID_CAPTION", "Caption text must be 1–120 characters."),
+            }
         ws = [words.get(wid) for wid in add_op["wordIds"]]
         if not ws or any(w is None for w in ws):
-            return {"ok": False, "error": _err("UNKNOWN_WORD", "Caption must anchor to existing transcript words.")}
-        # Sort by transcript index to keep deterministic ordering
-        ws_sorted = sorted(ws, key=lambda w: w.index)  # type: ignore[arg-type]
-        ids = [w.id for w in ws_sorted]
-        # Deduplicate identical caption
-        if any(c.text == text and c.wordIds == ids for c in state.captions):
-            return {"ok": False, "error": _err("NO_CHANGE", "An identical caption already exists on those words.")}
+            return {
+                "ok": False,
+                "error": _err("UNKNOWN_WORD", "Caption must anchor to existing transcript words."),
+            }
+        # Sort by transcript index for a deterministic word order.
+        ws_sorted = sorted(ws, key=lambda w: w.index)  # type: ignore[union-attr]
+        ids = [w.id for w in ws_sorted]  # type: ignore[union-attr]
+
+        # Reject exact duplicate.
+        if any(c.text == text and list(c.wordIds) == ids for c in state.captions):
+            return {
+                "ok": False,
+                "error": _err("NO_CHANGE", "An identical caption already exists on those words."),
+            }
+
         state.captions.append(
             Caption(
                 id=f"cap_{state.nextId}",
@@ -317,18 +379,27 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             )
         )
         state.nextId += 1
-        placed_segments = layout(state.segments)
-        hidden = sum(1 for w in ws_sorted if not place_word(placed_segments, w)["visible"])
+
+        # Warn about anchored words that are currently cut.
+        placed_segs = layout(state.segments)
+        hidden = sum(
+            1 for w in ws_sorted  # type: ignore[union-attr]
+            if not place_word(placed_segs, w)["visible"]
+        )
         if hidden:
-            notes.append(f"{hidden} anchored word(s) are currently cut; the caption shows over the rest.")
+            notes.append(
+                f"{hidden} anchored word(s) are currently cut; the caption shows over the rest."
+            )
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- remove_caption ----------
+    # ------------------------------------------------------------------
+    # remove_caption
+    # ------------------------------------------------------------------
     if op_type == "remove_caption":
         rem_op: RemoveCaptionOp = op  # type: ignore[assignment]
-        before = len(state.captions)
+        before_count = len(state.captions)
         state.captions = [c for c in state.captions if c.id != rem_op["captionId"]]
-        if len(state.captions) == before:
+        if len(state.captions) == before_count:
             return {
                 "ok": False,
                 "error": _err(
@@ -339,92 +410,153 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             }
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- style_caption ----------
+    # ------------------------------------------------------------------
+    # style_caption
+    # ------------------------------------------------------------------
     if op_type == "style_caption":
         style_op: StyleCaptionOp = op  # type: ignore[assignment]
         cap = next((c for c in state.captions if c.id == style_op["captionId"]), None)
         if cap is None:
             return {"ok": False, "error": _err("UNKNOWN_CAPTION", "That caption does not exist.")}
+
         changed = False
-        # Size stepping
-        if style_op.get("sizeStep"):
-            sizes: List[CaptionSize] = ["sm", "md", "lg", "xl"]
+        new_size = cap.size
+        new_position = cap.position
+
+        size_step = style_op.get("sizeStep")
+        if size_step:
             try:
-                idx = sizes.index(cap.size) + style_op["sizeStep"]  # type: ignore[arg-type]
-                if 0 <= idx < len(sizes):
-                    cap.size = sizes[idx]
+                new_idx = SIZES.index(cap.size) + size_step
+                if 0 <= new_idx < len(SIZES):
+                    new_size = SIZES[new_idx]  # type: ignore[assignment]
                     changed = True
             except ValueError:
                 pass
-        # Position change
-        if style_op.get("position") and style_op["position"] != cap.position:
-            cap.position = style_op["position"]  # type: ignore[arg-type]
+
+        new_pos_candidate = style_op.get("position")
+        if new_pos_candidate and new_pos_candidate != cap.position:
+            new_position = new_pos_candidate  # type: ignore[assignment]
             changed = True
+
         if not changed:
             return {"ok": False, "error": _err("NO_CHANGE", "The caption already has that style.")}
+
+        # Replace the frozen Caption in the list with an updated copy.
+        state.captions = [
+            replace(c, size=new_size, position=new_position) if c.id == style_op["captionId"] else c
+            for c in state.captions
+        ]
         return {"ok": True, "state": state, "notes": notes}
 
-    # ---------- move (reorder) ----------
+    # ------------------------------------------------------------------
+    # move (reorder)
+    # ------------------------------------------------------------------
     if op_type == "move":
         move_op: MoveOp = op  # type: ignore[assignment]
-        e = _validate_range(move_op["range"], state)
-        if e:
-            return {"ok": False, "error": e}
-        # Split the timeline so the moved region becomes isolated
-        segs = split_at(split_at(state.segments, move_op["range"].start), move_op["range"].end)
-        moving = [s for s in segs if s.srcStart >= move_op["range"].start and s.srcEnd <= move_op["range"].end]
+        err = _validate_range(move_op["range"], state)
+        if err:
+            return {"ok": False, "error": err}
+
+        r = move_op["range"]
+        segs = split_at(split_at(state.segments, r.start), r.end)
+        moving = [s for s in segs if s.srcStart >= r.start and s.srcEnd <= r.end]
         if not moving:
-            return {"ok": False, "error": _err("NO_VISIBLE_CONTENT", "That range is entirely cut, nothing to move.")}
-        rest = [s for s in segs if not (s.srcStart >= move_op["range"].start and s.srcEnd <= move_op["range"].end)]
+            return {
+                "ok": False,
+                "error": _err("NO_VISIBLE_CONTENT", "That range is entirely cut, nothing to move."),
+            }
+        rest = [s for s in segs if not (s.srcStart >= r.start and s.srcEnd <= r.end)]
         if not rest:
             return {"ok": False, "error": _err("NO_CHANGE", "Moving the whole video changes nothing.")}
-        # Determine insertion point
-        if move_op["to"] == "start":
+
+        to = move_op["to"]
+        if to == "start":
             insert_at = 0
-        elif move_op["to"] == "end":
+        elif to == "end":
             insert_at = len(rest)
         else:
-            # Destination is a specific source timestamp
-            t = move_op["to"]["beforeSrc"]  # type: ignore[index]
-            if move_op["range"].start < t < move_op["range"].end:
-                return {"ok": False, "error": _err("INVALID_MOVE", "The destination lies inside the section being moved.")}
-            # Split the rest at the destination time to create a clean insertion point
+            # ``to`` is {"beforeSrc": <ms>}
+            t: int = to["beforeSrc"]  # type: ignore[index]
+            if r.start < t < r.end:
+                return {
+                    "ok": False,
+                    "error": _err("INVALID_MOVE", "The destination lies inside the section being moved."),
+                }
             rest = split_at(rest, t)
             insert_at = next((i for i, s in enumerate(rest) if s.srcStart == t), -1)
             if insert_at < 0:
-                # Destination may be exactly at a segment end
                 end_idx = next((i for i, s in enumerate(rest) if s.srcEnd == t), -1)
                 if end_idx < 0:
-                    return {"ok": False, "error": _err("DESTINATION_CUT", "The destination time is not in the current timeline.")}
+                    return {
+                        "ok": False,
+                        "error": _err(
+                            "DESTINATION_CUT",
+                            "The destination time is not in the current timeline.",
+                        ),
+                    }
                 insert_at = end_idx + 1
-        new_order = rest[:insert_at] + moving + rest[insert_at:]
-        normalized = normalize_segments(new_order)
-        if normalized == state.segments:
+
+        new_segs = rest[:insert_at] + moving + rest[insert_at:]
+        normalized = normalize_segments(new_segs)
+
+        # Compare as plain dicts to match TS JSON.stringify comparison.
+        def _seg_dict(s: Segment) -> dict:
+            return {"srcStart": s.srcStart, "srcEnd": s.srcEnd, "speed": s.speed}
+
+        if [_seg_dict(s) for s in normalized] == [_seg_dict(s) for s in state.segments]:
             return {"ok": False, "error": _err("NO_CHANGE", "The section is already at that position.")}
+
         state.segments = normalized
         return {"ok": True, "state": state, "notes": notes}
 
-    # If we reach here, the operation type is unknown (should never happen)
-    return {"ok": False, "error": _err("UNKNOWN_OP", f"Operation type {op_type} is not supported.")}
+    # Unknown op type (should never happen with a typed Op union).
+    return {  # type: ignore[return-value]
+        "ok": False,
+        "error": _err("UNKNOWN_OP", f"Operation type '{op_type}' is not supported."),
+    }
+
 
 # ---------------------------------------------------------------------------
-# Multi‑operation helper – mirrors `applyOps`
+# Multi-operation helper – mirrors ``applyOps`` in the TypeScript source
 # ---------------------------------------------------------------------------
 
-def apply_ops(state: TimelineState, ops: List[Op], words: Dict[str, Word]) -> Union[Tuple[bool, TimelineState, List[str]], Tuple[bool, EngineError, int]]:
-    """Apply a sequence of operations atomically.
+class ApplyOpsSuccess(TypedDict):
+    ok: bool
+    state: TimelineState
+    notes: List[str]
 
-    Returns ``(True, new_state, notes)`` on total success, or ``(False, error,
-    failed_index)`` if any operation fails. The original ``state`` is left
-    untouched.
+
+class ApplyOpsFailure(TypedDict):
+    ok: bool
+    error: EngineError
+    failedIndex: int
+
+
+ApplyOpsResult = Union[ApplyOpsSuccess, ApplyOpsFailure]
+
+
+def apply_ops(
+    state: TimelineState,
+    ops: List[Op],
+    words: Dict[str, Word],
+) -> ApplyOpsResult:
+    """Apply a sequence of operations atomically (all-or-nothing).
+
+    Returns ``{"ok": True, "state": ..., "notes": [...]}`` when every
+    operation succeeds, or ``{"ok": False, "error": ..., "failedIndex": N}``
+    when operation *N* fails (the original *state* is left completely
+    untouched).
     """
     cur = state
     notes: List[str] = []
     for i, op in enumerate(ops):
         result = apply_op(cur, op, words)
         if not result["ok"]:
-            return (False, result["error"], i)  # type: ignore[return-value]
-        cur = result["state"]
-        notes.extend(result["notes"])
-    return (True, cur, notes)
-"""
+            return {
+                "ok": False,
+                "error": result["error"],  # type: ignore[typeddict-item]
+                "failedIndex": i,
+            }
+        cur = result["state"]  # type: ignore[typeddict-item]
+        notes.extend(result["notes"])  # type: ignore[typeddict-item]
+    return {"ok": True, "state": cur, "notes": notes}
