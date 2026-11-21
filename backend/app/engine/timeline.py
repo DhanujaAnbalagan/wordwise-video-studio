@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
-from .types import Segment, Ms, Interval, Word
+from .types import Segment, Ms, Interval, Word, TextOverlay
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -127,6 +127,8 @@ def _merge_intervals(intervals: List[Interval]) -> List[Interval]:
             cur = nxt
     merged.append(cur)
     return merged
+
+merge_intervals = _merge_intervals
 
 def present_intervals(segs: List[Segment]) -> List[Interval]:
     """Return the union of source intervals covered by the provided segments.
@@ -274,6 +276,122 @@ def place_word(placed: List[PlacedSegment], w: Word) -> Dict[str, Optional[float
         "tlEnd": p.tlStart + (e - p.srcStart) / p.speed,
         "speed": p.speed,
     }
+
+# ---------------------------------------------------------------------------
+# Multi-slice word placement & Text overlay placement helpers
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class WordSlice:
+    """A single surviving slice of a transcript word on the timeline."""
+    srcStart: Ms
+    srcEnd: Ms
+    tlStart: float
+    tlEnd: float
+    speed: float
+    segmentIndex: int
+
+@dataclass(frozen=True)
+class WordPlacementMultiSlice:
+    """Complete multi-slice placement for a transcript word."""
+    wordId: str
+    visible: bool
+    keptFraction: float
+    totalKeptMs: Ms
+    slices: List[WordSlice]
+
+@dataclass(frozen=True)
+class PlacedOverlaySpan:
+    """A timeline span where a text overlay is visible."""
+    tlStart: float
+    tlEnd: float
+    speed: Optional[float] = None
+
+@dataclass(frozen=True)
+class PlacedOverlay:
+    """Placement result for a text overlay."""
+    overlay: TextOverlay
+    visible: bool
+    spans: List[PlacedOverlaySpan]
+
+
+def place_word_slices(placed: List[PlacedSegment], w: Word) -> WordPlacementMultiSlice:
+    """Calculate ALL surviving timeline slices for a transcript word.
+
+    Returns a ``WordPlacementMultiSlice`` containing all disjoint slices in timeline order,
+    correctly handling cuts, reordered segments, and speed variations across segments.
+    """
+    dur = max(1, w.end - w.start)
+    slices: List[WordSlice] = []
+    total_kept: Ms = 0
+    for idx, p in enumerate(placed):
+        s = max(w.start, p.srcStart)
+        e = min(w.end, p.srcEnd)
+        if e > s:
+            total_kept += e - s
+            tl_s = p.tlStart + (s - p.srcStart) / p.speed
+            tl_e = p.tlStart + (e - p.srcStart) / p.speed
+            slices.append(
+                WordSlice(
+                    srcStart=s,
+                    srcEnd=e,
+                    tlStart=tl_s,
+                    tlEnd=tl_e,
+                    speed=p.speed,
+                    segmentIndex=idx,
+                )
+            )
+    kept_fraction = total_kept / dur
+    return WordPlacementMultiSlice(
+        wordId=w.id,
+        visible=kept_fraction >= WORD_KEEP_FRACTION,
+        keptFraction=kept_fraction,
+        totalKeptMs=total_kept,
+        slices=slices,
+    )
+
+
+def place_words_slices(placed: List[PlacedSegment], words: List[Word]) -> Dict[str, WordPlacementMultiSlice]:
+    """Calculate multi-slice placements for multiple transcript words."""
+    return {w.id: place_word_slices(placed, w) for w in words}
+
+
+def place_text_overlay(placed: List[PlacedSegment], overlay: TextOverlay) -> PlacedOverlay:
+    """Determine the timeline placement for a text overlay.
+
+    If ``overlay.anchorType == 'source'``:
+        The overlay interval ``[startMs, endMs]`` is mapped through the placed segments.
+        If the source interval is split across reordered or cut segments, multiple timeline spans
+        are produced.
+    If ``overlay.anchorType == 'timeline'``:
+        The overlay interval ``[startMs, endMs]`` is placed directly on the timeline without
+        transforming through source segments, preserving its explicit timeline position.
+    """
+    if overlay.anchorType == "timeline":
+        tl_s = float(overlay.startMs)
+        tl_e = float(overlay.endMs)
+        spans = [PlacedOverlaySpan(tlStart=tl_s, tlEnd=tl_e, speed=1.0)] if tl_e > tl_s else []
+        return PlacedOverlay(overlay=overlay, visible=len(spans) > 0, spans=spans)
+
+    # source-anchored
+    spans: List[PlacedOverlaySpan] = []
+    for p in placed:
+        s = max(overlay.startMs, p.srcStart)
+        e = min(overlay.endMs, p.srcEnd)
+        if e > s:
+            spans.append(
+                PlacedOverlaySpan(
+                    tlStart=p.tlStart + (s - p.srcStart) / p.speed,
+                    tlEnd=p.tlStart + (e - p.srcStart) / p.speed,
+                    speed=p.speed,
+                )
+            )
+    return PlacedOverlay(overlay=overlay, visible=len(spans) > 0, spans=spans)
+
+
+def place_text_overlays(placed: List[PlacedSegment], overlays: List[TextOverlay]) -> List[PlacedOverlay]:
+    """Determine timeline placements for a list of text overlays."""
+    return [place_text_overlay(placed, o) for o in overlays]
 
 # ---------------------------------------------------------------------------
 # End of file

@@ -26,7 +26,9 @@ from backend.app.engine.types import (
     Segment,
     TimelineState,
     Word,
+    TextOverlay,
 )
+from backend.app.engine.timeline import layout, place_text_overlay
 from backend.app.engine.operations import (
     MIN_SPEED,
     MAX_SPEED,
@@ -44,6 +46,7 @@ def make_state(
     segments=None,
     captions=None,
     effects=None,
+    overlays=None,
     next_id: int = 1,
 ) -> TimelineState:
     """Return a minimal TimelineState. Default: single 10 s segment at 1x."""
@@ -54,6 +57,7 @@ def make_state(
         segments=list(segments),
         captions=list(captions or []),
         effects=list(effects or []),
+        overlays=list(overlays or []),
         nextId=next_id,
     )
 
@@ -91,6 +95,7 @@ def assert_immutable(original: TimelineState, after_op_state: TimelineState):
     assert original.segments is not after_op_state.segments
     assert original.captions is not after_op_state.captions
     assert original.effects is not after_op_state.effects
+    assert original.overlays is not after_op_state.overlays
 
 
 # ===========================================================================
@@ -234,6 +239,66 @@ class TestRestore:
         state = self._pre_cut_state()
         op = {"type": "restore", "ranges": [Interval(start=0, end=99_000)]}
         assert_fail(apply_op(state, op, EMPTY_WORDS), "RANGE_OUT_OF_BOUNDS")
+
+    def test_restore_overlapping_ranges(self):
+        state = self._pre_cut_state()
+        op = {
+            "type": "restore",
+            "ranges": [Interval(start=2_000, end=4_000), Interval(start=3_000, end=5_000)],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=0, srcEnd=10_000, speed=1.0)]
+
+    def test_restore_duplicate_ranges(self):
+        state = self._pre_cut_state()
+        op = {
+            "type": "restore",
+            "ranges": [Interval(start=2_000, end=5_000), Interval(start=2_000, end=5_000)],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=0, srcEnd=10_000, speed=1.0)]
+
+    def test_restore_adjacent_ranges(self):
+        state = self._pre_cut_state()
+        op = {
+            "type": "restore",
+            "ranges": [Interval(start=2_000, end=3_500), Interval(start=3_500, end=5_000)],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=0, srcEnd=10_000, speed=1.0)]
+
+    def test_restore_after_speed_changes(self):
+        state = make_state(segments=[
+            Segment(srcStart=0, srcEnd=2_000, speed=2.0),
+            Segment(srcStart=5_000, srcEnd=10_000, speed=0.5),
+        ])
+        op = {"type": "restore", "ranges": [Interval(start=2_000, end=5_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [
+            Segment(srcStart=0, srcEnd=2_000, speed=2.0),
+            Segment(srcStart=2_000, srcEnd=5_000, speed=1.0),
+            Segment(srcStart=5_000, srcEnd=10_000, speed=0.5),
+        ]
+        for i in range(len(new.segments) - 1):
+            assert new.segments[i].srcEnd <= new.segments[i + 1].srcStart
+
+    def test_restore_confirm_no_duplicate_or_overlapping_segments(self):
+        state = make_state(segments=[
+            Segment(srcStart=0, srcEnd=1_000, speed=1.0),
+            Segment(srcStart=3_000, srcEnd=4_000, speed=1.0),
+            Segment(srcStart=7_000, srcEnd=10_000, speed=1.0),
+        ])
+        op = {
+            "type": "restore",
+            "ranges": [
+                Interval(start=1_000, end=2_000),
+                Interval(start=1_500, end=3_000),
+                Interval(start=4_000, end=7_000),
+                Interval(start=4_000, end=7_000),
+            ],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=0, srcEnd=10_000, speed=1.0)]
 
     def test_restore_immutability(self):
         state = self._pre_cut_state()
@@ -479,7 +544,36 @@ class TestAddCaption:
         result = apply_op(state, op, self.WORDS)
         assert result["ok"] is True
         assert len(result["notes"]) == 1
-        assert "cut" in result["notes"][0]
+        assert "All 1 anchored word(s) are currently cut" in result["notes"][0]
+
+    def test_add_caption_note_distinguishes_partially_hidden_words(self):
+        # w1 (0-500) is cut, but w2 (500-1000) is visible
+        state = make_state(segments=[
+            Segment(srcStart=500, srcEnd=10_000, speed=1.0)
+        ])
+        op = {"type": "add_caption", "text": "Partial caption", "wordIds": ["w1", "w2"]}
+        result = apply_op(state, op, self.WORDS)
+        assert result["ok"] is True
+        assert len(result["notes"]) == 1
+        assert "1 of 2 anchored word(s) are currently cut; the caption shows over the rest." == result["notes"][0]
+
+    def test_add_caption_note_distinguishes_completely_hidden_words(self):
+        # both w1 (0-500) and w2 (500-1000) are cut
+        state = make_state(segments=[
+            Segment(srcStart=1_000, srcEnd=10_000, speed=1.0)
+        ])
+        op = {"type": "add_caption", "text": "Hidden caption", "wordIds": ["w1", "w2"]}
+        result = apply_op(state, op, self.WORDS)
+        assert result["ok"] is True
+        assert len(result["notes"]) == 1
+        assert "All 2 anchored word(s) are currently cut; caption will not be visible on the timeline until restored." == result["notes"][0]
+
+    def test_add_caption_fully_visible_has_no_cut_note(self):
+        state = make_state(duration=10_000)
+        op = {"type": "add_caption", "text": "Visible caption", "wordIds": ["w1", "w2"]}
+        result = apply_op(state, op, self.WORDS)
+        assert result["ok"] is True
+        assert len(result["notes"]) == 0
 
     def test_add_caption_id_uses_nextid(self):
         state = make_state(next_id=10)
@@ -789,6 +883,382 @@ class TestApplyOps:
         result = apply_ops(state, [], EMPTY_WORDS)
         assert result["ok"] is True
         assert result["state"].segments == state.segments  # type: ignore[typeddict-item]
+
+
+# ===========================================================================
+# KEEP
+# ===========================================================================
+
+class TestKeep:
+
+    def test_keep_single_range(self):
+        state = make_state(duration=10_000)
+        op = {"type": "keep", "ranges": [Interval(start=2_000, end=7_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=2_000, srcEnd=7_000, speed=1.0)]
+        assert "5.000s" in apply_op(state, op, EMPTY_WORDS)["notes"][0]  # type: ignore
+
+    def test_keep_preserves_existing_cuts(self):
+        # Existing segments with cut gap 2000-4000
+        state = make_state(segments=[
+            Segment(srcStart=0, srcEnd=2_000, speed=1.0),
+            Segment(srcStart=4_000, srcEnd=8_000, speed=1.0),
+        ])
+        op = {"type": "keep", "ranges": [Interval(start=1_000, end=6_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [
+            Segment(srcStart=1_000, srcEnd=2_000, speed=1.0),
+            Segment(srcStart=4_000, srcEnd=6_000, speed=1.0),
+        ]
+
+    def test_keep_preserves_segment_speeds(self):
+        state = make_state(segments=[
+            Segment(srcStart=0, srcEnd=3_000, speed=2.0),
+            Segment(srcStart=3_000, srcEnd=7_000, speed=0.5),
+            Segment(srcStart=7_000, srcEnd=10_000, speed=1.5),
+        ])
+        op = {"type": "keep", "ranges": [Interval(start=2_000, end=8_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [
+            Segment(srcStart=2_000, srcEnd=3_000, speed=2.0),
+            Segment(srcStart=3_000, srcEnd=7_000, speed=0.5),
+            Segment(srcStart=7_000, srcEnd=8_000, speed=1.5),
+        ]
+
+    def test_keep_preserves_original_source_timestamps_and_order(self):
+        # Reordered segments
+        state = make_state(segments=[
+            Segment(srcStart=6_000, srcEnd=10_000, speed=1.0),
+            Segment(srcStart=0, srcEnd=4_000, speed=1.0),
+        ])
+        op = {"type": "keep", "ranges": [Interval(start=2_000, end=8_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [
+            Segment(srcStart=6_000, srcEnd=8_000, speed=1.0),
+            Segment(srcStart=2_000, srcEnd=4_000, speed=1.0),
+        ]
+
+    def test_keep_multiple_disjoint_ranges(self):
+        state = make_state(duration=10_000)
+        op = {
+            "type": "keep",
+            "ranges": [Interval(start=1_000, end=3_000), Interval(start=6_000, end=8_000)],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [
+            Segment(srcStart=1_000, srcEnd=3_000, speed=1.0),
+            Segment(srcStart=6_000, srcEnd=8_000, speed=1.0),
+        ]
+
+    def test_keep_overlapping_ranges(self):
+        state = make_state(duration=10_000)
+        op = {
+            "type": "keep",
+            "ranges": [Interval(start=1_000, end=4_000), Interval(start=3_000, end=6_000)],
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert new.segments == [Segment(srcStart=1_000, srcEnd=6_000, speed=1.0)]
+
+    def test_keep_empty_ranges_error(self):
+        state = make_state()
+        op = {"type": "keep", "ranges": []}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "INVALID_OPERATION")
+
+    def test_keep_invalid_range_bounds(self):
+        state = make_state()
+        op = {"type": "keep", "ranges": [Interval(start=5_000, end=2_000)]}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "INVALID_RANGE")
+
+    def test_keep_range_out_of_bounds(self):
+        state = make_state(duration=5_000)
+        op = {"type": "keep", "ranges": [Interval(start=0, end=8_000)]}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "RANGE_OUT_OF_BOUNDS")
+
+    def test_keep_whole_video_cut(self):
+        state = make_state(duration=10_000)
+        # Keep only 50 ms (less than MIN_TIMELINE_MS)
+        op = {"type": "keep", "ranges": [Interval(start=0, end=50)]}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "WHOLE_VIDEO_CUT")
+
+    def test_keep_range_with_no_visible_overlap_rejected(self):
+        state = make_state(segments=[Segment(srcStart=0, srcEnd=2_000, speed=1.0)])
+        # Keep range 4000-8000 which has no visible content
+        op = {"type": "keep", "ranges": [Interval(start=4_000, end=8_000)]}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "WHOLE_VIDEO_CUT")
+
+    def test_keep_no_change(self):
+        state = make_state(segments=[Segment(srcStart=2_000, srcEnd=7_000, speed=1.0)])
+        # Keep 1000-8000 covering all current content completely
+        op = {"type": "keep", "ranges": [Interval(start=1_000, end=8_000)]}
+        assert_fail(apply_op(state, op, EMPTY_WORDS), "NO_CHANGE")
+
+    def test_keep_immutability(self):
+        state = make_state()
+        original = copy.deepcopy(state)
+        op = {"type": "keep", "ranges": [Interval(start=1_000, end=5_000)]}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert state.segments == original.segments
+        assert_immutable(state, new)
+
+    def test_keep_repeatability(self):
+        state = make_state()
+        op = {"type": "keep", "ranges": [Interval(start=1_000, end=5_000)]}
+        r1 = apply_op(state, op, EMPTY_WORDS)
+        r2 = apply_op(state, op, EMPTY_WORDS)
+        assert r1["state"].segments == r2["state"].segments  # type: ignore[index]
+
+
+# ===========================================================================
+# TEXT OVERLAYS
+# ===========================================================================
+
+class TestTextOverlay:
+
+    def test_add_source_anchored_text_overlay(self):
+        state = make_state(duration=10_000)
+        op = {
+            "type": "add_text_overlay",
+            "text": "Intro Title",
+            "anchorType": "source",
+            "startMs": 1_000,
+            "endMs": 4_000,
+            "position": "bottom",
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert len(new.overlays) == 1
+        ov = new.overlays[0]
+        assert ov.text == "Intro Title"
+        assert ov.anchorType == "source"
+        assert ov.startMs == 1_000
+        assert ov.endMs == 4_000
+        assert ov.position == "bottom"
+        assert ov.id == "overlay_1"
+
+    def test_add_timeline_anchored_text_overlay(self):
+        state = make_state(duration=10_000)
+        op = {
+            "type": "add_text_overlay",
+            "text": "Fixed Bug",
+            "anchorType": "timeline",
+            "startMs": 500,
+            "endMs": 2_500,
+            "position": "top",
+        }
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert len(new.overlays) == 1
+        ov = new.overlays[0]
+        assert ov.text == "Fixed Bug"
+        assert ov.anchorType == "timeline"
+        assert ov.startMs == 500
+        assert ov.endMs == 2_500
+        assert ov.position == "top"
+
+    def test_anchor_type_stored_explicitly_no_silent_conversion(self):
+        state = make_state(duration=10_000)
+        op_src = {
+            "type": "add_text_overlay",
+            "text": "Source Text",
+            "anchorType": "source",
+            "startMs": 1_000,
+            "endMs": 3_000,
+        }
+        op_tl = {
+            "type": "add_text_overlay",
+            "text": "Timeline Text",
+            "anchorType": "timeline",
+            "startMs": 1_000,
+            "endMs": 3_000,
+        }
+        s1 = assert_ok(apply_op(state, op_src, EMPTY_WORDS))
+        s2 = assert_ok(apply_op(s1, op_tl, EMPTY_WORDS))
+        assert len(s2.overlays) == 2
+        assert s2.overlays[0].anchorType == "source"
+        assert s2.overlays[1].anchorType == "timeline"
+        # Never silently converted
+        assert isinstance(s2.overlays[0].anchorType, str)
+        assert s2.overlays[0].anchorType != s2.overlays[1].anchorType
+
+    def test_text_overlay_placement_after_speed_change(self):
+        # 10s video played at 2x -> 5s timeline
+        state = make_state(segments=[Segment(srcStart=0, srcEnd=10_000, speed=2.0)])
+        op_src = {
+            "type": "add_text_overlay",
+            "text": "Source",
+            "anchorType": "source",
+            "startMs": 2_000,
+            "endMs": 6_000,
+        }
+        op_tl = {
+            "type": "add_text_overlay",
+            "text": "Timeline",
+            "anchorType": "timeline",
+            "startMs": 2_000,
+            "endMs": 4_000,
+        }
+        s1 = assert_ok(apply_op(state, op_src, EMPTY_WORDS))
+        s2 = assert_ok(apply_op(s1, op_tl, EMPTY_WORDS))
+
+        placed_segs = layout(s2.segments)
+        placed_src = place_text_overlay(placed_segs, s2.overlays[0])
+        placed_tl = place_text_overlay(placed_segs, s2.overlays[1])
+
+        # Source-anchored interval [2000, 6000] at 2x speed -> timeline [1000, 3000]
+        assert placed_src.visible is True
+        assert len(placed_src.spans) == 1
+        assert placed_src.spans[0].tlStart == 1_000.0
+        assert placed_src.spans[0].tlEnd == 3_000.0
+        assert placed_src.spans[0].speed == 2.0
+
+        # Timeline-anchored interval [2000, 4000] stays exactly [2000, 4000]
+        assert placed_tl.visible is True
+        assert len(placed_tl.spans) == 1
+        assert placed_tl.spans[0].tlStart == 2_000.0
+        assert placed_tl.spans[0].tlEnd == 4_000.0
+
+    def test_text_overlay_placement_after_cuts(self):
+        # Cut 2000-6000: segments are 0-2000 and 6000-10000
+        state = make_state(segments=[
+            Segment(srcStart=0, srcEnd=2_000, speed=1.0),
+            Segment(srcStart=6_000, srcEnd=10_000, speed=1.0),
+        ])
+        # Overlay 1000-8000 spans across the cut
+        op_src = {
+            "type": "add_text_overlay",
+            "text": "Cross-cut",
+            "anchorType": "source",
+            "startMs": 1_000,
+            "endMs": 8_000,
+        }
+        op_tl = {
+            "type": "add_text_overlay",
+            "text": "Fixed-tl",
+            "anchorType": "timeline",
+            "startMs": 1_000,
+            "endMs": 3_000,
+        }
+        s1 = assert_ok(apply_op(state, op_src, EMPTY_WORDS))
+        s2 = assert_ok(apply_op(s1, op_tl, EMPTY_WORDS))
+
+        placed_segs = layout(s2.segments)
+        placed_src = place_text_overlay(placed_segs, s2.overlays[0])
+        placed_tl = place_text_overlay(placed_segs, s2.overlays[1])
+
+        # Source-anchored has 2 separate timeline spans
+        assert placed_src.visible is True
+        assert len(placed_src.spans) == 2
+        assert placed_src.spans[0].tlStart == 1_000.0
+        assert placed_src.spans[0].tlEnd == 2_000.0
+        assert placed_src.spans[1].tlStart == 2_000.0
+        assert placed_src.spans[1].tlEnd == 4_000.0
+
+        # Timeline-anchored stays single span [1000, 3000]
+        assert placed_tl.visible is True
+        assert len(placed_tl.spans) == 1
+        assert placed_tl.spans[0].tlStart == 1_000.0
+        assert placed_tl.spans[0].tlEnd == 3_000.0
+
+    def test_text_overlay_placement_after_reorder(self):
+        # Segments reordered: 5000-10000 first, then 0-5000
+        state = make_state(segments=[
+            Segment(srcStart=5_000, srcEnd=10_000, speed=1.0),
+            Segment(srcStart=0, srcEnd=5_000, speed=1.0),
+        ])
+        op_src = {
+            "type": "add_text_overlay",
+            "text": "Reordered",
+            "anchorType": "source",
+            "startMs": 2_000,
+            "endMs": 7_000,
+        }
+        s1 = assert_ok(apply_op(state, op_src, EMPTY_WORDS))
+        placed_segs = layout(s1.segments)
+        placed = place_text_overlay(placed_segs, s1.overlays[0])
+
+        assert placed.visible is True
+        assert len(placed.spans) == 2
+        # First span is from first placed segment (src 5000-10000), overlap is 5000-7000
+        assert placed.spans[0].tlStart == 0.0
+        assert placed.spans[0].tlEnd == 2_000.0
+        # Second span is from second placed segment (src 0-5000), overlap is 2000-5000
+        assert placed.spans[1].tlStart == 7_000.0
+        assert placed.spans[1].tlEnd == 10_000.0
+
+    def test_add_text_overlay_note_when_source_anchor_cut(self):
+        # 0-5000 is completely cut
+        state = make_state(segments=[Segment(srcStart=5_000, srcEnd=10_000, speed=1.0)])
+        op = {
+            "type": "add_text_overlay",
+            "text": "Cut text",
+            "anchorType": "source",
+            "startMs": 1_000,
+            "endMs": 3_000,
+        }
+        res = apply_op(state, op, EMPTY_WORDS)
+        assert res["ok"] is True
+        assert any("cut" in n for n in res["notes"])
+
+    def test_add_text_overlay_validation(self):
+        state = make_state(duration=10_000)
+        # Empty text
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "  ", "anchorType": "source", "startMs": 0, "endMs": 1000}, EMPTY_WORDS),
+            "INVALID_OVERLAY",
+        )
+        # Text too long
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "A" * 201, "anchorType": "source", "startMs": 0, "endMs": 1000}, EMPTY_WORDS),
+            "INVALID_OVERLAY",
+        )
+        # Unknown anchorType
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "Hi", "anchorType": "invalid", "startMs": 0, "endMs": 1000}, EMPTY_WORDS),  # type: ignore
+            "INVALID_OVERLAY",
+        )
+        # Negative start
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "Hi", "anchorType": "source", "startMs": -10, "endMs": 1000}, EMPTY_WORDS),
+            "INVALID_RANGE",
+        )
+        # end <= start
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "Hi", "anchorType": "source", "startMs": 1000, "endMs": 500}, EMPTY_WORDS),
+            "INVALID_RANGE",
+        )
+        # Source anchor out of bounds
+        assert_fail(
+            apply_op(state, {"type": "add_text_overlay", "text": "Hi", "anchorType": "source", "startMs": 0, "endMs": 20000}, EMPTY_WORDS),
+            "RANGE_OUT_OF_BOUNDS",
+        )
+        # Duplicate overlay
+        op_dup = {"type": "add_text_overlay", "text": "Unique", "anchorType": "source", "startMs": 0, "endMs": 1000}
+        s1 = assert_ok(apply_op(state, op_dup, EMPTY_WORDS))
+        assert_fail(apply_op(s1, op_dup, EMPTY_WORDS), "NO_CHANGE")
+
+    def test_remove_text_overlay(self):
+        state = make_state(duration=10_000)
+        op_add = {"type": "add_text_overlay", "text": "Remove me", "anchorType": "timeline", "startMs": 0, "endMs": 1000}
+        s1 = assert_ok(apply_op(state, op_add, EMPTY_WORDS))
+        assert len(s1.overlays) == 1
+        op_rem = {"type": "remove_text_overlay", "overlayId": "overlay_1"}
+        s2 = assert_ok(apply_op(s1, op_rem, EMPTY_WORDS))
+        assert len(s2.overlays) == 0
+
+    def test_remove_nonexistent_text_overlay_error(self):
+        state = make_state()
+        op_rem = {"type": "remove_text_overlay", "overlayId": "overlay_999"}
+        assert_fail(apply_op(state, op_rem, EMPTY_WORDS), "UNKNOWN_OVERLAY")
+
+    def test_text_overlay_immutability_and_repeatability(self):
+        state = make_state()
+        original = copy.deepcopy(state)
+        op = {"type": "add_text_overlay", "text": "Test", "anchorType": "source", "startMs": 0, "endMs": 1000}
+        new = assert_ok(apply_op(state, op, EMPTY_WORDS))
+        assert state.overlays == original.overlays
+        assert_immutable(state, new)
+
+        r1 = apply_op(state, op, EMPTY_WORDS)
+        r2 = apply_op(state, op, EMPTY_WORDS)
+        assert r1["state"].overlays == r2["state"].overlays  # type: ignore[index]
 
 
 # ===========================================================================

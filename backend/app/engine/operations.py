@@ -43,6 +43,7 @@ from .types import (
     TimelineState,
     Word,
     CutOp,
+    KeepOp,
     RestoreOp,
     SpeedOp,
     AudioOp,
@@ -50,11 +51,16 @@ from .types import (
     RemoveCaptionOp,
     StyleCaptionOp,
     MoveOp,
+    TextOverlay,
+    AddTextOverlayOp,
+    RemoveTextOverlayOp,
 )
 from .timeline import (
+    _merge_intervals,
     interval_minus,
     layout,
     normalize_segments,
+    place_text_overlay,
     place_word,
     present_intervals,
     present_ms,
@@ -117,7 +123,7 @@ def _validate_range(r: Interval, state: TimelineState) -> Optional[EngineError]:
 def _clone(state: TimelineState) -> TimelineState:
     """Return a shallow-but-independent copy of *state*.
 
-    Dataclass fields that are frozen (Segment, Caption, AudioEffect) are safe
+    Dataclass fields that are frozen (Segment, Caption, AudioEffect, TextOverlay) are safe
     to share; list containers are always copied so mutations to one state do
     not affect another.  This mirrors the TypeScript ``clone`` helper exactly.
     """
@@ -126,6 +132,7 @@ def _clone(state: TimelineState) -> TimelineState:
         segments=list(state.segments),
         captions=[replace(c, wordIds=list(c.wordIds)) for c in state.captions],
         effects=list(state.effects),
+        overlays=list(state.overlays),
         nextId=state.nextId,
     )
 
@@ -187,6 +194,56 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
         return {"ok": True, "state": state, "notes": notes}
 
     # ------------------------------------------------------------------
+    # keep
+    # ------------------------------------------------------------------
+    if op_type == "keep":
+        keep_op: KeepOp = op  # type: ignore[assignment]
+        if not keep_op["ranges"]:
+            return {"ok": False, "error": _err("INVALID_OPERATION", "Keep has no ranges.")}
+        for r in keep_op["ranges"]:
+            err = _validate_range(r, state)
+            if err:
+                return {"ok": False, "error": err}
+
+        kept_intervals = _merge_intervals(keep_op["ranges"])
+        new_segs: List[Segment] = []
+        for s in state.segments:
+            for k in kept_intervals:
+                ov_start = max(s.srcStart, k.start)
+                ov_end = min(s.srcEnd, k.end)
+                if ov_end > ov_start:
+                    new_segs.append(Segment(srcStart=ov_start, srcEnd=ov_end, speed=s.speed))
+
+        normalized = normalize_segments(new_segs)
+        if timeline_duration(normalized) < MIN_TIMELINE_MS:
+            return {
+                "ok": False,
+                "error": _err(
+                    "WHOLE_VIDEO_CUT",
+                    "This edit would remove the entire video, so it was not applied.",
+                    {"ranges": keep_op["ranges"]},
+                ),
+            }
+
+        def _seg_dict_local(s: Segment) -> dict:
+            return {"srcStart": s.srcStart, "srcEnd": s.srcEnd, "speed": s.speed}
+
+        if [_seg_dict_local(s) for s in normalized] == [_seg_dict_local(s) for s in state.segments]:
+            return {
+                "ok": False,
+                "error": _err(
+                    "NO_CHANGE",
+                    "All requested content is already kept, so nothing was changed.",
+                    {"ranges": keep_op["ranges"]},
+                ),
+            }
+
+        state.segments = normalized
+        kept_dur = sum(s.srcEnd - s.srcStart for s in normalized)
+        notes.append(f"Kept {kept_dur / 1000:.3f}s of source content.")
+        return {"ok": True, "state": state, "notes": notes}
+
+    # ------------------------------------------------------------------
     # restore
     # ------------------------------------------------------------------
     if op_type == "restore":
@@ -198,10 +255,10 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
 
         # Collect which sub-intervals of the requested ranges are absent (cut).
         present = present_intervals(state.segments)
-        missing: List[Interval] = []
+        raw_missing: List[Interval] = []
         for r in restore_op["ranges"]:
-            missing.extend(interval_minus(r, present))
-        missing.sort(key=lambda i: i.start)
+            raw_missing.extend(interval_minus(r, present))
+        missing = _merge_intervals(raw_missing)
 
         if not missing:
             return {
@@ -386,9 +443,14 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             1 for w in ws_sorted  # type: ignore[union-attr]
             if not place_word(placed_segs, w)["visible"]
         )
-        if hidden:
+        total_words = len(ws_sorted)
+        if hidden == total_words:
             notes.append(
-                f"{hidden} anchored word(s) are currently cut; the caption shows over the rest."
+                f"All {hidden} anchored word(s) are currently cut; caption will not be visible on the timeline until restored."
+            )
+        elif hidden > 0:
+            notes.append(
+                f"{hidden} of {total_words} anchored word(s) are currently cut; the caption shows over the rest."
             )
         return {"ok": True, "state": state, "notes": notes}
 
@@ -507,6 +569,111 @@ def apply_op(input_state: TimelineState, op: Op, words: Dict[str, Word]) -> OpRe
             return {"ok": False, "error": _err("NO_CHANGE", "The section is already at that position.")}
 
         state.segments = normalized
+        return {"ok": True, "state": state, "notes": notes}
+
+    # ------------------------------------------------------------------
+    # add_text_overlay
+    # ------------------------------------------------------------------
+    if op_type == "add_text_overlay":
+        overlay_op: AddTextOverlayOp = op  # type: ignore[assignment]
+        text = overlay_op["text"].strip()
+        if not text or len(text) > 200:
+            return {
+                "ok": False,
+                "error": _err("INVALID_OVERLAY", "Overlay text must be 1–200 characters."),
+            }
+        anchor_type = overlay_op.get("anchorType")
+        if anchor_type not in ("source", "timeline"):
+            return {
+                "ok": False,
+                "error": _err(
+                    "INVALID_OVERLAY",
+                    "Overlay anchorType must be 'source' or 'timeline'.",
+                    {"anchorType": anchor_type},
+                ),
+            }
+        start_ms = overlay_op["startMs"]
+        end_ms = overlay_op["endMs"]
+        if not isinstance(start_ms, int) or not isinstance(end_ms, int):
+            return {
+                "ok": False,
+                "error": _err("INVALID_RANGE", "Overlay bounds must be whole milliseconds."),
+            }
+        if start_ms < 0 or end_ms <= start_ms:
+            return {
+                "ok": False,
+                "error": _err("INVALID_RANGE", "Overlay endMs must be greater than startMs >= 0."),
+            }
+        if anchor_type == "source" and end_ms > state.sourceDurationMs:
+            return {
+                "ok": False,
+                "error": _err(
+                    "RANGE_OUT_OF_BOUNDS",
+                    "Source-anchored overlay lies outside the source video.",
+                    {"startMs": start_ms, "endMs": end_ms, "sourceDurationMs": state.sourceDurationMs},
+                ),
+            }
+
+        position = overlay_op.get("position") or "bottom"
+        if position not in ("bottom", "top", "center"):
+            return {
+                "ok": False,
+                "error": _err("INVALID_OVERLAY", f"Unknown position '{position}'."),
+            }
+
+        # Check duplicate
+        if any(
+            o.text == text
+            and o.anchorType == anchor_type
+            and o.startMs == start_ms
+            and o.endMs == end_ms
+            and o.position == position
+            for o in state.overlays
+        ):
+            return {
+                "ok": False,
+                "error": _err("NO_CHANGE", "An identical text overlay already exists."),
+            }
+
+        overlay = TextOverlay(
+            id=f"overlay_{state.nextId}",
+            text=text,
+            anchorType=anchor_type,
+            startMs=start_ms,
+            endMs=end_ms,
+            position=position,
+            style=overlay_op.get("style"),
+        )
+        state.overlays.append(overlay)
+        state.nextId += 1
+
+        if anchor_type == "source":
+            placed_segs = layout(state.segments)
+            placed_ov = place_text_overlay(placed_segs, overlay)
+            if not placed_ov.visible:
+                notes.append(
+                    "Source-anchored overlay falls within cut video content; it will not be visible on the timeline until restored."
+                )
+        notes.append(f"Added {anchor_type}-anchored text overlay '{text}'.")
+        return {"ok": True, "state": state, "notes": notes}
+
+    # ------------------------------------------------------------------
+    # remove_text_overlay
+    # ------------------------------------------------------------------
+    if op_type == "remove_text_overlay":
+        rem_op: RemoveTextOverlayOp = op  # type: ignore[assignment]
+        before_count = len(state.overlays)
+        state.overlays = [o for o in state.overlays if o.id != rem_op["overlayId"]]
+        if len(state.overlays) == before_count:
+            return {
+                "ok": False,
+                "error": _err(
+                    "UNKNOWN_OVERLAY",
+                    "That text overlay does not exist.",
+                    {"overlayId": rem_op["overlayId"]},
+                ),
+            }
+        notes.append("Removed text overlay.")
         return {"ok": True, "state": state, "notes": notes}
 
     # Unknown op type (should never happen with a typed Op union).

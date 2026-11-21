@@ -66,18 +66,37 @@ class AudioEffect:
     srcStart: Ms
     srcEnd: Ms
 
-# Full mutable timeline state – identical to TS `TimelineState`.
+OverlayAnchorType = Literal["source", "timeline"]
+
+# Text overlay with explicit source-time or timeline-time anchoring.
+@dataclass(frozen=True)
+class TextOverlay:
+    id: str
+    text: str
+    anchorType: OverlayAnchorType
+    startMs: Ms
+    endMs: Ms
+    position: Literal["bottom", "top", "center"] = "bottom"
+    style: Optional[Dict[str, str]] = None
+
+# Full mutable timeline state – identical to TS `TimelineState` plus overlays.
 @dataclass
 class TimelineState:
     sourceDurationMs: Ms
     segments: List[Segment] = field(default_factory=list)
     captions: List[Caption] = field(default_factory=list)
     effects: List[AudioEffect] = field(default_factory=list)
+    overlays: List[TextOverlay] = field(default_factory=list)
     nextId: int = 1
 
 # Operations – using TypedDict for flexibility.
 class CutOp(TypedDict):
     type: Literal["cut"]
+    ranges: List[Interval]
+    reason: Optional[str]
+
+class KeepOp(TypedDict):
+    type: Literal["keep"]
     ranges: List[Interval]
     reason: Optional[str]
 
@@ -115,8 +134,21 @@ class MoveOp(TypedDict):
     range: Interval
     to: Union[Literal["start", "end"], Dict[str, Ms]]  # {beforeSrc: Ms}
 
-Op = Union[CutOp, RestoreOp, SpeedOp, AudioOp, AddCaptionOp,
-           RemoveCaptionOp, StyleCaptionOp, MoveOp]
+class AddTextOverlayOp(TypedDict):
+    type: Literal["add_text_overlay"]
+    text: str
+    anchorType: OverlayAnchorType
+    startMs: Ms
+    endMs: Ms
+    position: Optional[Literal["bottom", "top", "center"]]
+    style: Optional[Dict[str, str]]
+
+class RemoveTextOverlayOp(TypedDict):
+    type: Literal["remove_text_overlay"]
+    overlayId: str
+
+Op = Union[CutOp, KeepOp, RestoreOp, SpeedOp, AudioOp, AddCaptionOp,
+           RemoveCaptionOp, StyleCaptionOp, MoveOp, AddTextOverlayOp, RemoveTextOverlayOp]
 
 # Instruction outcome.
 InstructionStatus = Literal["applied", "needs_clarification", "rejected"]

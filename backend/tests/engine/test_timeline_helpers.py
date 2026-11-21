@@ -30,6 +30,8 @@ from backend.app.engine.timeline import (
     overlap,
     present_intervals,
     place_word,
+    place_word_slices,
+    place_words_slices,
     layout,
 )
 
@@ -319,3 +321,153 @@ def test_immutability_place_word():
     placed = layout(segs)
     w = make_word(100, 200)
     _deepcopy_check(place_word, placed, w)
+
+# -------------------- place_word_slices tests --------------------
+
+def test_place_word_slices_single_fully_visible():
+    segs = [Segment(srcStart=0, srcEnd=2000, speed=1.0)]
+    placed = layout(segs)
+    w = make_word(start=500, end=1500)
+    res = place_word_slices(placed, w)
+    assert res.visible is True
+    assert res.keptFraction == 1.0
+    assert res.totalKeptMs == 1000
+    assert len(res.slices) == 1
+    sl = res.slices[0]
+    assert sl.srcStart == 500
+    assert sl.srcEnd == 1500
+    assert sl.tlStart == 500.0
+    assert sl.tlEnd == 1500.0
+    assert sl.speed == 1.0
+    assert sl.segmentIndex == 0
+
+def test_place_word_slices_multiple_surviving_slices_across_cut():
+    # Gap 800-1200 cut out; word spans 600-1400 (dur=800)
+    segs = [
+        Segment(srcStart=0, srcEnd=800, speed=1.0),
+        Segment(srcStart=1200, srcEnd=2000, speed=1.0),
+    ]
+    placed = layout(segs)
+    w = make_word(start=600, end=1400)
+    res = place_word_slices(placed, w)
+    # Proves that multiple surviving timeline slices are returned
+    assert len(res.slices) == 2
+    assert res.totalKeptMs == 400
+    assert math.isclose(res.keptFraction, 0.5, rel_tol=1e-12)
+    assert res.visible is True
+
+    # First slice in first segment
+    s0 = res.slices[0]
+    assert s0.srcStart == 600
+    assert s0.srcEnd == 800
+    assert math.isclose(s0.tlStart, 600.0, rel_tol=1e-12)
+    assert math.isclose(s0.tlEnd, 800.0, rel_tol=1e-12)
+    assert s0.segmentIndex == 0
+
+    # Second slice in second segment (which starts at tl 800)
+    s1 = res.slices[1]
+    assert s1.srcStart == 1200
+    assert s1.srcEnd == 1400
+    assert math.isclose(s1.tlStart, 800.0, rel_tol=1e-12)
+    assert math.isclose(s1.tlEnd, 1000.0, rel_tol=1e-12)
+    assert s1.segmentIndex == 1
+
+def test_place_word_slices_different_speeds():
+    segs = [
+        Segment(srcStart=0, srcEnd=1000, speed=2.0),     # tl: 0 - 500
+        Segment(srcStart=1000, srcEnd=2000, speed=0.5),  # tl: 500 - 2500
+    ]
+    placed = layout(segs)
+    w = make_word(start=500, end=1500)
+    res = place_word_slices(placed, w)
+    assert len(res.slices) == 2
+    assert res.totalKeptMs == 1000
+    assert res.keptFraction == 1.0
+
+    # Slice 0 in 2x segment
+    s0 = res.slices[0]
+    assert s0.srcStart == 500
+    assert s0.srcEnd == 1000
+    assert math.isclose(s0.tlStart, 250.0, rel_tol=1e-12)
+    assert math.isclose(s0.tlEnd, 500.0, rel_tol=1e-12)
+    assert s0.speed == 2.0
+
+    # Slice 1 in 0.5x segment
+    s1 = res.slices[1]
+    assert s1.srcStart == 1000
+    assert s1.srcEnd == 1500
+    assert math.isclose(s1.tlStart, 500.0, rel_tol=1e-12)
+    assert math.isclose(s1.tlEnd, 1500.0, rel_tol=1e-12)
+    assert s1.speed == 0.5
+
+def test_place_word_slices_reordered_segments():
+    segs = [
+        Segment(srcStart=20_000, srcEnd=30_000, speed=1.0),  # tl: 0 - 10000
+        Segment(srcStart=0, srcEnd=10_000, speed=1.0),       # tl: 10000 - 20000
+    ]
+    placed = layout(segs)
+    # Word spans source 8000 to 22000 (crosses both segments in reverse timeline order)
+    w = make_word(start=8_000, end=22_000)
+    res = place_word_slices(placed, w)
+    assert len(res.slices) == 2
+
+    # Slices appear in timeline order!
+    # First timeline slice is in segment 0 (src 20000-22000)
+    assert res.slices[0].srcStart == 20_000
+    assert res.slices[0].srcEnd == 22_000
+    assert res.slices[0].tlStart == 0.0
+    assert res.slices[0].tlEnd == 2_000.0
+    assert res.slices[0].segmentIndex == 0
+
+    # Second timeline slice is in segment 1 (src 8000-10000)
+    assert res.slices[1].srcStart == 8_000
+    assert res.slices[1].srcEnd == 10_000
+    assert res.slices[1].tlStart == 18_000.0
+    assert res.slices[1].tlEnd == 20_000.0
+    assert res.slices[1].segmentIndex == 1
+
+def test_place_word_slices_fully_cut():
+    segs = [Segment(srcStart=0, srcEnd=500, speed=1.0)]
+    placed = layout(segs)
+    w = make_word(start=600, end=800)
+    res = place_word_slices(placed, w)
+    assert res.visible is False
+    assert res.keptFraction == 0.0
+    assert res.totalKeptMs == 0
+    assert len(res.slices) == 0
+
+def test_place_word_slices_empty_word():
+    segs = [Segment(srcStart=0, srcEnd=1000, speed=1.0)]
+    placed = layout(segs)
+    w = make_word(start=500, end=500)
+    res = place_word_slices(placed, w)
+    assert res.visible is False
+    assert len(res.slices) == 0
+
+def test_place_words_slices_batch():
+    segs = [Segment(srcStart=0, srcEnd=2000, speed=1.0)]
+    placed = layout(segs)
+    w1 = make_word(100, 500, "w1")
+    w2 = make_word(600, 1000, "w2")
+    res_map = place_words_slices(placed, [w1, w2])
+    assert "w1" in res_map and "w2" in res_map
+    assert res_map["w1"].visible is True
+    assert res_map["w2"].visible is True
+
+def test_place_word_compatibility_preserved():
+    # Verify legacy place_word continues to work as expected
+    segs = [Segment(srcStart=0, srcEnd=2000, speed=1.0)]
+    placed = layout(segs)
+    w = make_word(500, 1500)
+    res = place_word(placed, w)
+    assert isinstance(res, dict)
+    assert res["visible"] is True
+    assert math.isclose(res["tlStart"], 500.0)
+    assert math.isclose(res["tlEnd"], 1500.0)
+    assert res["speed"] == 1.0
+
+def test_immutability_place_word_slices():
+    segs = [Segment(srcStart=0, srcEnd=1000, speed=1.0)]
+    placed = layout(segs)
+    w = make_word(100, 200)
+    _deepcopy_check(place_word_slices, placed, w)
