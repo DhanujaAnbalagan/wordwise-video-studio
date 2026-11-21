@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:8080", "http://localhost:5173"])
     max_upload_mb: int = 1024
     worker_threads: int = 2
+    whisper_timeout_s: int = 300  # seconds, configurable timeout for Whisper
+    job_lease_timeout_s: int = 300  # seconds, lease timeout for job workers
     job_timeout_s: int = 3600
     idempotency_ttl_hours: int = 24
 
